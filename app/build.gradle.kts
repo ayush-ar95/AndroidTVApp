@@ -1,9 +1,9 @@
 plugins {
-    alias(libs.plugins.android.application)
+    id("com.android.application")
 }
 
 android {
-    namespace = "com.example.webviewexoplayertvapp"
+    namespace = "com.example.webviewexoplayertvapp"  // Replace with your actual package/namespace
     compileSdk = 35
 
     defaultConfig {
@@ -13,6 +13,7 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -25,13 +26,17 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 }
 
 dependencies {
-
-    implementation(libs.androidx.leanback)
-    implementation(libs.glide)
+    implementation("androidx.core:core:1.13.1")  // Java-friendly core (no -ktx)
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    implementation("androidx.leanback:leanback:1.2.0")
 }
