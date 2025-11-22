@@ -39,4 +39,20 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     implementation("androidx.leanback:leanback:1.2.0")
+
+    // WebView enhancements (latest stable)
+    implementation("androidx.webkit:webkit:1.12.0")
+
+    // Media3 ExoPlayer (latest stable: 1.8.0)
+    implementation("androidx.media3:media3-exoplayer:1.8.0")  // Core player
+    implementation("androidx.media3:media3-exoplayer-dash:1.8.0")  // For DASH streams
+    implementation("androidx.media3:media3-ui:1.8.0")  // For player UI/controls
+    implementation("androidx.media3:media3-common:1.8.0")  // Common utils
+    implementation("androidx.media3:media3-datasource-okhttp:1.8.0")  // For HTTP with custom headers
+
+    // DRM support (includes Widevine)
+//    implementation("androidx.media3:media3-drm:1.8.0")
+
+    // JSON parsing (latest)
+    implementation("com.google.code.gson:gson:2.11.0")
 }
