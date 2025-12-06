@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@android:color/transparent"
+    android:padding="16dp">
+
+    <!-- Seek bar, larger for TV touchless navigation -->
+    <androidx.media3.ui.DefaultTimeBar
+        android:id="@id/exo_progress"
+        android:layout_width="match_parent"
+        android:layout_height="26dp"
+        android:focusable="true"
+        android:focusableInTouchMode="true" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- Play/Pause, larger and focusable -->
+        <ImageButton
+            android:id="@id/exo_play_pause"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:focusable="true"
+            android:contentDescription="Play/Pause" />
+
+        <!-- Rewind -->
+        <ImageButton
+            android:id="@id/exo_rew"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:focusable="true"
+            android:contentDescription="Rewind" />
+
+        <!-- Fast Forward -->
+        <ImageButton
+            android:id="@id/exo_ffwd"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:focusable="true"
+            android:contentDescription="Fast Forward" />
+
+        <!-- Settings button (includes subtitles, speed, quality) -->
+        <ImageButton
+            android:id="@id/exo_settings"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:focusable="true"
+            android:contentDescription="Settings" />
+
+    </LinearLayout>
+
+</LinearLayout>

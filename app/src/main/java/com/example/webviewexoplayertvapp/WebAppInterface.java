@@ -28,7 +28,9 @@ public class WebAppInterface {
             final String videoUrl = json.get("videoUrl").getAsString();
             final String drmLicenseUrl = json.get("drmLicenseUrl").getAsString();
             final String authToken = json.get("authToken").getAsString();
-            JsonObject videoLibrary = json.get("videoLibrary").getAsJsonObject();
+
+            // CHANGE 1: Store videoLibrary as final so it can be passed to startPlayback
+            final JsonObject videoLibrary = json.get("videoLibrary").getAsJsonObject();
             Log.d("WebAppInterface", "Video Library: " + videoLibrary.toString());
 
             if (activity != null) {
@@ -36,7 +38,8 @@ public class WebAppInterface {
                     @UnstableApi
                     @Override
                     public void run() {
-                        activity.startPlayback(videoUrl, drmLicenseUrl, authToken);
+                        // CHANGE 2: Pass videoLibrary to startPlayback (new 4th parameter)
+                        activity.startPlayback(videoUrl, drmLicenseUrl, authToken, videoLibrary);
                     }
                 });
             }

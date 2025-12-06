@@ -1,5 +1,7 @@
     package com.example.webviewexoplayertvapp;
 
+    import static android.media.MediaDrm.*;
+
     import android.app.Activity;
     import android.net.Uri;
     import android.os.Build;
@@ -7,19 +9,25 @@
     import android.util.Base64;
     import android.util.Log;
     import android.util.Pair;
+    import android.view.Gravity;
     import android.view.KeyEvent;
     import android.view.View;
+    import android.webkit.JavascriptInterface;
     import android.webkit.WebChromeClient;
     import android.webkit.WebSettings;
     import android.webkit.WebView;
     import android.webkit.WebViewClient;
 
+    import androidx.annotation.OptIn;
     import androidx.annotation.RequiresApi;
     import androidx.media3.common.DrmInitData;
     import androidx.media3.common.Format;
     import androidx.media3.common.MediaItem;
     import androidx.media3.common.MimeTypes;
     import androidx.media3.common.Player;
+    import androidx.media3.common.TrackGroup;
+    import android.media.MediaDrm;
+    import androidx.media3.common.TrackSelectionParameters;
     import androidx.media3.common.Tracks;
     import androidx.media3.common.util.UnstableApi;
     import androidx.media3.datasource.DefaultHttpDataSource;
@@ -37,26 +45,36 @@
     import androidx.media3.exoplayer.drm.OfflineLicenseHelper;
     import androidx.media3.exoplayer.drm.KeysExpiredException;
     import androidx.media3.exoplayer.source.MediaSource;
+    import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+    import androidx.media3.ui.AspectRatioFrameLayout;
     import androidx.media3.ui.PlayerView;
     import androidx.security.crypto.EncryptedSharedPreferences;
     import androidx.security.crypto.MasterKeys;
 
     import com.google.common.collect.ImmutableList;
+    import com.google.gson.JsonArray;
+    import com.google.gson.JsonElement;
+    import com.google.gson.JsonObject;
 
+    import java.lang.reflect.Field;
     import java.util.HashMap;
     import java.util.Map;
     import java.util.UUID;
+    import android.os.Build.VERSION_CODES;
+    import android.widget.PopupWindow;
 
     public class MainActivity extends Activity {
 
         private static final String TAG = "MainActivity";
         private static final String DRM_TAG = "DRM_LICENSE";
-
+        private static final String SECURITY_LEVEL_L1 = "L1";
+        private static final String SECURITY_LEVEL_L3 = "L3";
         private WebView webView;
         private PlayerView playerView;
         private ExoPlayer exoPlayer;
         private android.content.SharedPreferences drmPrefs;
-
+        @UnstableApi
+        private DefaultTrackSelector trackSelector;
         private static final UUID WIDEVINE_UUID = new UUID(-0x121074568629b532L, -0x5c37D8232ae2de13L);
         private static final String DRM_PREFS_NAME = "drm_prefs";
         private static final String DRM_KEY_SET_ID = "widevine_key_set_id";
@@ -65,6 +83,9 @@
         private String currentVideoUrl;
         private String currentLicenseUrl;
         private String currentAuthToken;
+        private JsonObject currentVideoLibrary;
+        private boolean hasSubtitles = false;
+        private float currentVolume = 1.0f;
 
         interface DrmInitDataCallback {
             @UnstableApi
@@ -72,6 +93,7 @@
             void onError(Exception e);
         }
 
+        @UnstableApi
         @RequiresApi(api = Build.VERSION_CODES.M)
         @Override
         protected void onCreate(Bundle savedInstanceState) {
@@ -115,77 +137,282 @@
             });
             webView.setWebChromeClient(new WebChromeClient());
             webView.addJavascriptInterface(new WebAppInterface(this), "AndroidTV");
-            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
-//            webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
+            webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
+            webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/");
+//    webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
+//    webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
 
             // Setup ExoPlayer
             playerView = findViewById(R.id.player_view);
-            exoPlayer = new ExoPlayer.Builder(this).build();
+            trackSelector = new DefaultTrackSelector(this);
+            exoPlayer = new ExoPlayer.Builder(this)
+                    .setTrackSelector(trackSelector)
+                    .build();
             playerView.setPlayer(exoPlayer);
 
             // Setup player event listener - FIXED for Media3 1.4.1
             exoPlayer.addListener(new Player.Listener() {
                 @Override
-                public void onPlaybackStateChanged(@Player.State int playbackState) {
-                    Log.d(TAG, "Playback state changed: " + getPlaybackStateName(playbackState));
-
+                public void onPlaybackStateChanged(int playbackState) {
+                    Log.d(TAG, "Playback state: " + getPlaybackStateName(playbackState));
                     if (playbackState == Player.STATE_READY) {
-                        Log.d(TAG, "Playback ready - video is playing");
-                    } else if (playbackState == Player.STATE_ENDED) {
-                        Log.d(TAG, "Playback ended");
-                        stopPlayback();
-                    } else if (playbackState == Player.STATE_BUFFERING) {
-                        Log.d(TAG, "Buffering...");
+                        playerView.showController();
+                        updateSubtitleMenu();
                     }
                 }
 
-                @UnstableApi
-                @Override
+                @UnstableApi @Override
                 public void onPlayerError(androidx.media3.common.PlaybackException error) {
-                    Log.e(TAG, "Player error occurred: " + error.getMessage(), error);
-                    Log.e(TAG, "Error code: " + error.errorCode);
-
+                    Log.e(TAG, "Player error: " + error.getMessage(), error);
                     if (isDrmExpirationError(error) && !isRetryingPlayback) {
-                        Log.w(DRM_TAG, "DRM license expired or invalid - attempting recovery");
+                        Log.w(DRM_TAG, "DRM expired - recovering");
                         clearCachedKeySetId();
                         isRetryingPlayback = true;
-                        startPlayback(currentVideoUrl, currentLicenseUrl, currentAuthToken);
+                        // CHANGE: Added currentVideoLibrary as the 4th parameter
+                        startPlayback(currentVideoUrl, currentLicenseUrl, currentAuthToken, currentVideoLibrary);
                     } else {
-                        Log.e(TAG, "Unrecoverable error or retry already attempted");
                         stopPlayback();
                     }
+                }
+
+                @Override
+                public void onTracksChanged(Tracks tracks) {
+                    hasSubtitles = false;
+                    for (Tracks.Group group : tracks.getGroups()) {
+                        if (group.getType() == androidx.media3.common.C.TRACK_TYPE_TEXT) {
+                            hasSubtitles = true;
+                            break;
+                        }
+                    }
+                    updateSubtitleMenu();
                 }
             });
 
-            Log.d(TAG, "onCreate: Initialization complete");
+            // Add dynamic timeout adjustment for settings submenu and reposition popup above
+            androidx.media3.ui.PlayerControlView controller = playerView.findViewById(androidx.media3.ui.R.id.exo_controller);
+            if (controller != null) {
+                android.widget.ImageButton settingsButton = controller.findViewById(androidx.media3.ui.R.id.exo_settings);
+                if (settingsButton != null) {
+                    try {
+                        // Use reflection to get existing OnClickListener
+                        Field listenerInfoField = View.class.getDeclaredField("mListenerInfo");
+                        listenerInfoField.setAccessible(true);
+                        Object listenerInfo = listenerInfoField.get(settingsButton);
+                        View.OnClickListener originalClickListener = null;
+                        if (listenerInfo != null) {
+                            Field onClickField = listenerInfo.getClass().getDeclaredField("mOnClickListener");
+                            onClickField.setAccessible(true);
+                            originalClickListener = (View.OnClickListener) onClickField.get(listenerInfo);
+                        }
+
+                        final View.OnClickListener finalOriginalClick = originalClickListener;
+                        settingsButton.setOnClickListener(v -> {
+                            try {
+                                Field field = androidx.media3.ui.PlayerControlView.class.getDeclaredField("settingsWindow");
+                                field.setAccessible(true);
+                                PopupWindow popup = (PopupWindow) field.get(controller);
+                                if (popup != null) {
+                                    popup.setHeight(0);
+                                    popup.getContentView().setVisibility(View.INVISIBLE);
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error setting popup initial state", e);
+                            }
+
+                            if (finalOriginalClick != null) {
+                                finalOriginalClick.onClick(v);
+                            }
+
+                            try {
+                                Field field = androidx.media3.ui.PlayerControlView.class.getDeclaredField("settingsWindow");
+                                field.setAccessible(true);
+                                PopupWindow popup = (PopupWindow) field.get(controller);
+                                if (popup != null) {
+                                    // Use reflection to get existing OnDismissListener
+                                    Field dismissField = PopupWindow.class.getDeclaredField("mOnDismissListener");
+                                    dismissField.setAccessible(true);
+                                    PopupWindow.OnDismissListener originalDismiss = (PopupWindow.OnDismissListener) dismissField.get(popup);
+
+                                    final long[] lastDismissTime = {0};
+                                    final boolean[] isRepositioning = {false};
+
+                                    popup.setOnDismissListener(() -> {
+                                        long currentTime = System.currentTimeMillis();
+                                        if (currentTime - lastDismissTime[0] < 200) {
+                                            return;
+                                        }
+                                        lastDismissTime[0] = currentTime;
+
+                                        if (isRepositioning[0]) {
+                                            isRepositioning[0] = false;
+                                            return;
+                                        }
+                                        if (originalDismiss != null) {
+                                            originalDismiss.onDismiss();
+                                        }
+                                        controller.setShowTimeoutMs(3000);
+                                        controller.postDelayed(() -> {
+                                            if (popup.isShowing()) {
+                                                controller.setShowTimeoutMs(0);
+                                                // Reposition sub popup
+                                                popup.getContentView().post(() -> {
+                                                    if (popup.isShowing()) {
+                                                        isRepositioning[0] = true;
+                                                        popup.dismiss();
+                                                        popup.getContentView().measure(
+                                                                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                                                                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                                                        int popupWidth = popup.getContentView().getMeasuredWidth();
+                                                        int popupHeight = popup.getContentView().getMeasuredHeight();
+                                                        popup.setWidth(popupWidth);
+                                                        popup.setHeight(popupHeight);
+                                                        int[] location = new int[2];
+                                                        settingsButton.getLocationOnScreen(location);
+                                                        int extraPadding = 20; // Adjust this value to move it higher
+                                                        int x = location[0] + settingsButton.getWidth() - popupWidth; // Right-aligned
+                                                        int y = location[1] - popupHeight - extraPadding; // Above the button with extra padding
+                                                        popup.showAtLocation(playerView, Gravity.NO_GRAVITY, x, y);
+                                                        popup.getContentView().setVisibility(View.VISIBLE);
+                                                    }
+                                                });
+                                            }
+                                        }, 100);
+                                    });
+                                    controller.setShowTimeoutMs(0);
+
+                                    // Reposition main popup
+                                    popup.getContentView().post(() -> {
+                                        if (popup.isShowing()) {
+                                            isRepositioning[0] = true;
+                                            popup.dismiss();
+                                            popup.getContentView().measure(
+                                                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                                                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                                            int popupWidth = popup.getContentView().getMeasuredWidth();
+                                            int popupHeight = popup.getContentView().getMeasuredHeight();
+                                            popup.setWidth(popupWidth);
+                                            popup.setHeight(popupHeight);
+                                            int[] location = new int[2];
+                                            settingsButton.getLocationOnScreen(location);
+                                            int extraPadding = 20; // Adjust this value to move it higher
+                                            int x = location[0] + settingsButton.getWidth() - popupWidth; // Right-aligned
+                                            int y = location[1] - popupHeight - extraPadding; // Above the button with extra padding
+                                            popup.showAtLocation(playerView, Gravity.NO_GRAVITY, x, y);
+                                            popup.getContentView().setVisibility(View.VISIBLE);
+                                        }
+                                    });
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error adjusting controller timeout or position", e);
+                            }
+                        });
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error setting up settings button listener", e);
+                    }
+                }
+            }
+
+            Log.d(TAG, "onCreate: Complete");
         }
 
 
         @UnstableApi
-        public void startPlayback(String videoUrl, String licenseUrl, String authToken) {
-            Log.d(TAG, "========== Starting Playback ==========");
-            Log.d(TAG, "Video URL: " + videoUrl);
-            Log.d(TAG, "License URL: " + licenseUrl);
-            Log.d(DRM_TAG, "Auth token present: " + (authToken != null && !authToken.isEmpty()));
-
+        public void startPlayback(String videoUrl, String licenseUrl, String authToken, JsonObject videoLibrary) {
+            Log.d(TAG, "Starting Playback - URL: " + videoUrl);
             currentVideoUrl = videoUrl;
             currentLicenseUrl = licenseUrl;
             currentAuthToken = authToken;
+            currentVideoLibrary = videoLibrary;  // CHANGE 1: Store the videoLibrary
             isRetryingPlayback = false;
 
-            runOnUiThread(() -> {
+            try {
+                // Widevine level check
+                String securityLevel = getWidevineSecurityLevel();
+                Log.d(DRM_TAG, "Widevine level: " + securityLevel);
+                if (securityLevel.equals(SECURITY_LEVEL_L3)) {
+                    Log.w(DRM_TAG, "L3 fallback - limiting to SD");
+                    TrackSelectionParameters params = trackSelector.getParameters()
+                            .buildUpon()
+                            .setMaxVideoSizeSd()
+                            .build();
+                    trackSelector.setParameters(params);
+                }
+
+                // Pause WebView
+                webView.onPause();
+                webView.setVisibility(View.INVISIBLE);
                 playerView.setVisibility(View.VISIBLE);
-                webView.setVisibility(View.GONE);
-            });
 
-            byte[] keySetId = getCachedKeySetId();
+                // Parse and set aspect ratio
+                parseAndSetAspectRatio();
 
-            if (keySetId != null) {
-                Log.d(DRM_TAG, "Found cached keySetId, checking validity...");
-                new Thread(() -> handleCachedLicense(videoUrl, licenseUrl, authToken, keySetId)).start();
-            } else {
-                Log.d(DRM_TAG, "No cached license found, acquiring new license...");
-                new Thread(() -> acquireNewLicense(videoUrl, licenseUrl, authToken)).start();
+                // CHANGE 2: Added the missing playback logic
+                // Check if we have a cached license
+                byte[] keySetId = getCachedKeySetId();
+
+                if (keySetId != null) {
+                    // We have a cached license, validate and use it
+                    Log.d(DRM_TAG, "Found cached keySetId, validating...");
+                    handleCachedLicense(videoUrl, licenseUrl, authToken, keySetId);
+                } else {
+                    // No cached license, acquire a new one
+                    Log.d(DRM_TAG, "No cached keySetId found, acquiring new license...");
+                    acquireNewLicense(videoUrl, licenseUrl, authToken);
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "Playback start error", e);
+                stopPlayback();
+            }
+        }
+
+
+        @UnstableApi
+        @OptIn(markerClass = UnstableApi.class)
+        private String getWidevineSecurityLevel() {
+            try {
+                FrameworkMediaDrm drm = FrameworkMediaDrm.newInstance(WIDEVINE_UUID);
+                String level;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    level = drm.getPropertyString("securityLevel");
+                } else {
+                    level = SECURITY_LEVEL_L3;  // Safe fallback for older devices
+                }
+                drm.release();
+                return level;
+            } catch (Exception e) {
+                Log.e(DRM_TAG, "Failed to get security level", e);
+                return SECURITY_LEVEL_L3;
+            }
+        }
+
+        @UnstableApi
+        private void parseAndSetAspectRatio() {
+            if (currentVideoLibrary != null) {
+                JsonArray properties = currentVideoLibrary.getAsJsonArray("properties");
+                for (JsonElement prop : properties) {
+                    JsonObject obj = prop.getAsJsonObject();
+                    if (obj.get("name").getAsString().equals("scale")) {
+                        String scale = obj.get("value").getAsString();  // e.g., "1280,720,H"
+                        if (scale.contains("H")) {
+                            playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);
+                        } else if (scale.contains("V")) {
+                            playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH);  // Example for vertical
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        @UnstableApi
+        private void updateSubtitleMenu() {
+            if (!hasSubtitles) {
+                TrackSelectionParameters params = trackSelector.getParameters()
+                        .buildUpon()
+                        .setDisabledTextTrackSelectionFlags(androidx.media3.common.C.SELECTION_FLAG_DEFAULT)
+                        .build();
+                trackSelector.setParameters(params);
             }
         }
 
@@ -319,6 +546,34 @@
             }).start();
         }
 
+        private void addSubtitlesToMediaItem(MediaItem.Builder builder) {
+            ImmutableList.Builder<MediaItem.SubtitleConfiguration> subsBuilder = ImmutableList.builder();
+            // Add existing if any (though usually empty at this point)
+            // Since builder doesn't have getter, assume starting empty or track in code
+            if (currentVideoLibrary != null) {
+                JsonArray properties = currentVideoLibrary.getAsJsonArray("properties");
+                for (JsonElement prop : properties) {
+                    JsonObject obj = prop.getAsJsonObject();
+                    if (obj.get("name").getAsString().equals("subtitles")) {
+                        String value = obj.get("value").getAsString();
+                        String[] tracks = value.split(";");
+                        for (String track : tracks) {
+                            String[] parts = track.split(",");
+                            if (parts.length >= 2) {
+                                subsBuilder.add(new MediaItem.SubtitleConfiguration.Builder(Uri.parse(parts[0]))
+                                        .setMimeType(MimeTypes.TEXT_VTT)
+                                        .setLanguage(parts[1])
+                                        .setSelectionFlags(androidx.media3.common.C.SELECTION_FLAG_DEFAULT)
+                                        .build());
+                            }
+                        }
+                        hasSubtitles = true;
+                        break;
+                    }
+                }
+            }
+            builder.setSubtitleConfigurations(subsBuilder.build());
+        }
 
 
         @UnstableApi
@@ -350,11 +605,15 @@
             }
 
             // Build media item
-            MediaItem mediaItem = new MediaItem.Builder()
+            MediaItem.Builder builder = new MediaItem.Builder()
                     .setUri(videoUrl)
                     .setMimeType(MimeTypes.APPLICATION_MPD)
-                    .setDrmConfiguration(drmBuilder.build())
-                    .build();
+                    .setDrmConfiguration(drmBuilder.build());
+
+            // Add subtitles if available
+            addSubtitlesToMediaItem(builder);
+
+            MediaItem mediaItem = builder.build();
 
             // Create media source
             DefaultHttpDataSource.Factory httpDataSourceFactory = new DefaultHttpDataSource.Factory();
@@ -368,7 +627,6 @@
 
             Log.d(TAG, "✓ Playback started successfully");
         }
-
         @UnstableApi
         private OfflineLicenseHelper buildOfflineLicenseHelper(String licenseUrl, String authToken) {
             Log.d(DRM_TAG, "Building OfflineLicenseHelper...");
@@ -446,12 +704,16 @@
         }
 
         private void stopPlayback() {
-            Log.d(TAG, "Stopping playback...");
-            exoPlayer.stop();
-            playerView.setVisibility(View.GONE);
-            webView.setVisibility(View.VISIBLE);
-            isRetryingPlayback = false;
-            Log.d(TAG, "✓ Playback stopped, returned to WebView");
+            try {
+                exoPlayer.stop();
+                playerView.setVisibility(View.GONE);
+                webView.setVisibility(View.VISIBLE);
+                webView.onResume();
+                hasSubtitles = false;
+                isRetryingPlayback = false;
+            } catch (Exception e) {
+                Log.e(TAG, "Stop error", e);
+            }
         }
 
         @Override
@@ -486,9 +748,20 @@
             }
         }
 
+        @UnstableApi
         @Override
         public boolean dispatchKeyEvent(KeyEvent event) {
             if (playerView.getVisibility() == View.VISIBLE && exoPlayer != null) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP || event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                        float delta = (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) ? 0.1f : -0.1f;
+                        currentVolume = Math.max(0f, Math.min(1f, currentVolume + delta));
+                        exoPlayer.setVolume(currentVolume);
+                        playerView.showController();
+                        return true;
+                    }
+                    playerView.showController();  // Show on any key
+                }
                 return playerView.dispatchKeyEvent(event) || super.dispatchKeyEvent(event);
             }
             return super.dispatchKeyEvent(event);
@@ -502,6 +775,13 @@
                 case Player.STATE_READY: return "READY";
                 case Player.STATE_ENDED: return "ENDED";
                 default: return "UNKNOWN(" + state + ")";
+            }
+        }
+
+        public class NativeBridge {
+            @JavascriptInterface
+            public String getPlatform() {
+                return "android_tv";
             }
         }
     }
