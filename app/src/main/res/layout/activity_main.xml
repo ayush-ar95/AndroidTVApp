@@ -17,7 +17,6 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:visibility="gone"
-
         app:show_timeout="3000"
         app:resize_mode="fit"
         app:use_controller="true" />

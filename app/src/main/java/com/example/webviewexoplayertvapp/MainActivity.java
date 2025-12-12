@@ -1,7 +1,5 @@
     package com.example.webviewexoplayertvapp;
 
-    import static android.media.MediaDrm.*;
-
     import android.app.Activity;
     import android.net.Uri;
     import android.os.Build;
@@ -13,6 +11,7 @@
     import android.view.KeyEvent;
     import android.view.View;
     import android.webkit.JavascriptInterface;
+    import android.webkit.ValueCallback;
     import android.webkit.WebChromeClient;
     import android.webkit.WebSettings;
     import android.webkit.WebView;
@@ -25,8 +24,6 @@
     import androidx.media3.common.MediaItem;
     import androidx.media3.common.MimeTypes;
     import androidx.media3.common.Player;
-    import androidx.media3.common.TrackGroup;
-    import android.media.MediaDrm;
     import androidx.media3.common.TrackSelectionParameters;
     import androidx.media3.common.Tracks;
     import androidx.media3.common.util.UnstableApi;
@@ -60,7 +57,6 @@
     import java.util.HashMap;
     import java.util.Map;
     import java.util.UUID;
-    import android.os.Build.VERSION_CODES;
     import android.widget.PopupWindow;
 
     public class MainActivity extends Activity {
@@ -86,6 +82,11 @@
         private JsonObject currentVideoLibrary;
         private boolean hasSubtitles = false;
         private float currentVolume = 1.0f;
+
+        private String currentVideoId;
+        private long watchedTimeMillis = 0;
+        private long lastPlayTimestamp = 0;
+        private boolean isActivelyPlaying = false;
 
         interface DrmInitDataCallback {
             @UnstableApi
@@ -139,7 +140,7 @@
             webView.addJavascriptInterface(new WebAppInterface(this), "AndroidTV");
             webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
             webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/");
-//    webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
+//            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
 //    webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
 
             // Setup ExoPlayer
@@ -158,6 +159,24 @@
                     if (playbackState == Player.STATE_READY) {
                         playerView.showController();
                         updateSubtitleMenu();
+
+                        // CHANGE: Start/resume time accumulation if playing
+                        if (exoPlayer.isPlaying()) {
+                            startAccumulatingWatchTime();
+                        }
+                    } else if (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_ENDED) {
+                        // CHANGE: Pause accumulation on buffering or end
+                        stopAccumulatingWatchTime();
+                    }
+                }
+
+                @Override
+                public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+                    // CHANGE: Handle play/pause changes
+                    if (playWhenReady && exoPlayer.getPlaybackState() == Player.STATE_READY) {
+                        startAccumulatingWatchTime();
+                    } else {
+                        stopAccumulatingWatchTime();
                     }
                 }
 
@@ -168,8 +187,8 @@
                         Log.w(DRM_TAG, "DRM expired - recovering");
                         clearCachedKeySetId();
                         isRetryingPlayback = true;
-                        // CHANGE: Added currentVideoLibrary as the 4th parameter
-                        startPlayback(currentVideoUrl, currentLicenseUrl, currentAuthToken, currentVideoLibrary);
+                        // CHANGE: Updated call with videoId
+                        startPlayback(currentVideoUrl, currentLicenseUrl, currentAuthToken, currentVideoLibrary, currentVideoId);
                     } else {
                         stopPlayback();
                     }
@@ -317,13 +336,20 @@
 
 
         @UnstableApi
-        public void startPlayback(String videoUrl, String licenseUrl, String authToken, JsonObject videoLibrary) {
+        public void startPlayback(String videoUrl, String licenseUrl, String authToken, JsonObject videoLibrary, String videoId) {
             Log.d(TAG, "Starting Playback - URL: " + videoUrl);
             currentVideoUrl = videoUrl;
             currentLicenseUrl = licenseUrl;
             currentAuthToken = authToken;
-            currentVideoLibrary = videoLibrary;  // CHANGE 1: Store the videoLibrary
+            currentVideoLibrary = videoLibrary;
+            currentVideoId = videoId;
             isRetryingPlayback = false;
+
+            // CHANGE: Reset watch time tracking
+            watchedTimeMillis = 0;
+            lastPlayTimestamp = 0;
+            isActivelyPlaying = false;
+            Log.d(TAG, "Watch time tracking reset for videoId: " + currentVideoId);
 
             try {
                 // Widevine level check
@@ -705,14 +731,58 @@
 
         private void stopPlayback() {
             try {
+                // CHANGE: Finalize watch time before stopping
+                stopAccumulatingWatchTime();
+
                 exoPlayer.stop();
                 playerView.setVisibility(View.GONE);
+
+                // CHANGE: Send tracked data to web via JS bridge
+                if (currentVideoId != null && webView != null) {
+                    long watchedSeconds = watchedTimeMillis / 1000;  // Convert ms to seconds
+                    String json = "{\"videoId\":\"" + currentVideoId + "\",\"watchedTime\":" + watchedSeconds + "}";
+                    Log.d(TAG, "Sending video progress JSON: " + json);
+
+                    webView.evaluateJavascript("javascript:handleVideoProgress('" + json + "');", new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String value) {
+                            if (value == null || value.equals("null")) {
+                                Log.e(TAG, "JS evaluation failed or function not found");
+                            } else {
+                                Log.d(TAG, "JS evaluation result: " + value);
+                            }
+                        }
+                    });
+                }
+
                 webView.setVisibility(View.VISIBLE);
                 webView.onResume();
                 hasSubtitles = false;
                 isRetryingPlayback = false;
+                // CHANGE: Reset tracking vars
+                currentVideoId = null;
+                watchedTimeMillis = 0;
             } catch (Exception e) {
                 Log.e(TAG, "Stop error", e);
+            }
+        }
+
+        // CHANGE: New method to start accumulating time
+        private void startAccumulatingWatchTime() {
+            if (!isActivelyPlaying) {
+                lastPlayTimestamp = System.currentTimeMillis();
+                isActivelyPlaying = true;
+                Log.d(TAG, "Started accumulating watch time");
+            }
+        }
+
+        // CHANGE: New method to stop and add delta
+        private void stopAccumulatingWatchTime() {
+            if (isActivelyPlaying) {
+                long currentTime = System.currentTimeMillis();
+                watchedTimeMillis += (currentTime - lastPlayTimestamp);
+                isActivelyPlaying = false;
+                Log.d(TAG, "Stopped accumulating watch time. Current total: " + (watchedTimeMillis / 1000) + "s");
             }
         }
 
@@ -736,6 +806,17 @@
             if (exoPlayer != null) {
                 Log.d(TAG, "Activity paused - pausing playback");
                 exoPlayer.pause();
+                // CHANGE: Pause accumulation on app pause
+                stopAccumulatingWatchTime();
+            }
+        }
+
+        @Override
+        protected void onResume() {
+            super.onResume();
+            // CHANGE: If player was playing, resume accumulation (but actual play handled by ExoPlayer)
+            if (exoPlayer != null && exoPlayer.isPlaying()) {
+                startAccumulatingWatchTime();
             }
         }
 
