@@ -139,8 +139,8 @@
             webView.setWebChromeClient(new WebChromeClient());
             webView.addJavascriptInterface(new WebAppInterface(this), "AndroidTV");
             webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
-            webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/");
-//            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
+//            webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/");
+            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
 //    webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
 
             // Setup ExoPlayer
