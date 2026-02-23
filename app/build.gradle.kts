@@ -3,15 +3,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.webviewexoplayertvapp"  // Replace with your actual package/namespace
+    namespace = "com.toqqer.homecinemaplustv"  // Replace with your actual package/namespace
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.webviewexoplayertvapp"
+        applicationId = "com.toqqer.homecinemaplustv"
         minSdk = 21
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
