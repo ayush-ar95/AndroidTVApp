@@ -10,8 +10,8 @@ android {
         applicationId = "com.toqqer.homecinemaplustv"
         minSdk = 21
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.3"
+        versionCode = 4
+        versionName = "1.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
