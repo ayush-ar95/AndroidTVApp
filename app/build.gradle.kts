@@ -29,6 +29,22 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            val apkName = "toqqer-tv-${variant.versionName}-${variant.buildType.name}.apk"
+            output.outputFileName = apkName
+
+            variant.assembleProvider.get().doLast {
+                copy {
+                    from(output.outputFile)
+                    into(rootProject.projectDir)
+                }
+            }
+        }
+    }
 }
 
 dependencies {
@@ -46,6 +62,7 @@ dependencies {
     // Media3 ExoPlayer (stable version: 1.4.1, DRM included in core)
     implementation("androidx.media3:media3-exoplayer:1.4.1")  // Core player with DRM
     implementation("androidx.media3:media3-exoplayer-dash:1.4.1")  // For DASH streams
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")   // For HLS streams
     implementation("androidx.media3:media3-ui:1.4.1")  // For player UI/controls
     implementation("androidx.media3:media3-common:1.4.1")  // Common utils
     implementation("androidx.media3:media3-datasource-okhttp:1.4.1")  // For HTTP with custom headers

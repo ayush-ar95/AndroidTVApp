@@ -31,6 +31,7 @@
     import androidx.media3.exoplayer.ExoPlaybackException;
     import androidx.media3.exoplayer.ExoPlayer;
     import androidx.media3.exoplayer.dash.DashMediaSource;
+    import androidx.media3.exoplayer.hls.HlsMediaSource;
     import androidx.media3.exoplayer.dash.DashUtil;
     import androidx.media3.exoplayer.dash.manifest.DashManifest;
     import androidx.media3.exoplayer.dash.manifest.Period;
@@ -84,6 +85,7 @@
         private float currentVolume = 1.0f;
 
         private String currentVideoId;
+        private String currentStreamType = "dash";
         private long watchedTimeMillis = 0;
         private long lastPlayTimestamp = 0;
         private boolean isActivelyPlaying = false;
@@ -140,10 +142,10 @@
             webView.addJavascriptInterface(new WebAppInterface(this), "AndroidTV");
             webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
             WebView.setWebContentsDebuggingEnabled(true);
-//            webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/");
+            webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/");
 //            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
-            webView.loadUrl("https://homecinemaplus.tv/");
-//    webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
+//            webView.loadUrl("https://homecinemaplus.tv/");
+//            webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
 
             // Setup ExoPlayer
             playerView = findViewById(R.id.player_view);
@@ -190,7 +192,7 @@
                         clearCachedKeySetId();
                         isRetryingPlayback = true;
                         // CHANGE: Updated call with videoId
-                        startPlayback(currentVideoUrl, currentLicenseUrl, currentAuthToken, currentVideoLibrary, currentVideoId);
+                        startPlayback(currentVideoUrl, currentLicenseUrl, currentAuthToken, currentVideoLibrary, currentVideoId, currentStreamType);
                     } else {
                         stopPlayback();
                     }
@@ -338,34 +340,23 @@
 
 
         @UnstableApi
-        public void startPlayback(String videoUrl, String licenseUrl, String authToken, JsonObject videoLibrary, String videoId) {
-            Log.d(TAG, "Starting Playback - URL: " + videoUrl);
+        public void startPlayback(String videoUrl, String licenseUrl, String authToken, JsonObject videoLibrary, String videoId, String streamType) {
+            Log.d(TAG, "Starting Playback - URL: " + videoUrl + " | streamType: " + streamType);
             currentVideoUrl = videoUrl;
             currentLicenseUrl = licenseUrl;
             currentAuthToken = authToken;
             currentVideoLibrary = videoLibrary;
             currentVideoId = videoId;
+            currentStreamType = streamType != null ? streamType : "dash";
             isRetryingPlayback = false;
 
-            // CHANGE: Reset watch time tracking
+            // Reset watch time tracking
             watchedTimeMillis = 0;
             lastPlayTimestamp = 0;
             isActivelyPlaying = false;
             Log.d(TAG, "Watch time tracking reset for videoId: " + currentVideoId);
 
             try {
-                // Widevine level check
-                String securityLevel = getWidevineSecurityLevel();
-                Log.d(DRM_TAG, "Widevine level: " + securityLevel);
-                if (securityLevel.equals(SECURITY_LEVEL_L3)) {
-                    Log.w(DRM_TAG, "L3 fallback - limiting to SD");
-                    TrackSelectionParameters params = trackSelector.getParameters()
-                            .buildUpon()
-                            .setMaxVideoSizeSd()
-                            .build();
-                    trackSelector.setParameters(params);
-                }
-
                 // Pause WebView
                 webView.onPause();
                 webView.setVisibility(View.INVISIBLE);
@@ -374,18 +365,33 @@
                 // Parse and set aspect ratio
                 parseAndSetAspectRatio();
 
-                // CHANGE 2: Added the missing playback logic
-                // Check if we have a cached license
-                byte[] keySetId = getCachedKeySetId();
+                boolean isHls = currentStreamType.equals("hls");
 
-                if (keySetId != null) {
-                    // We have a cached license, validate and use it
-                    Log.d(DRM_TAG, "Found cached keySetId, validating...");
-                    handleCachedLicense(videoUrl, licenseUrl, authToken, keySetId);
+                if (isHls) {
+                    // HLS: play directly without DRM license acquisition
+                    Log.d(TAG, "HLS stream detected, skipping DRM license flow");
+                    buildAndPlayMediaSource(videoUrl, licenseUrl, authToken, null);
                 } else {
-                    // No cached license, acquire a new one
-                    Log.d(DRM_TAG, "No cached keySetId found, acquiring new license...");
-                    acquireNewLicense(videoUrl, licenseUrl, authToken);
+                    // DASH: Widevine DRM flow
+                    String securityLevel = getWidevineSecurityLevel();
+                    Log.d(DRM_TAG, "Widevine level: " + securityLevel);
+                    if (securityLevel.equals(SECURITY_LEVEL_L3)) {
+                        Log.w(DRM_TAG, "L3 fallback - limiting to SD");
+                        TrackSelectionParameters params = trackSelector.getParameters()
+                                .buildUpon()
+                                .setMaxVideoSizeSd()
+                                .build();
+                        trackSelector.setParameters(params);
+                    }
+
+                    byte[] keySetId = getCachedKeySetId();
+                    if (keySetId != null) {
+                        Log.d(DRM_TAG, "Found cached keySetId, validating...");
+                        handleCachedLicense(videoUrl, licenseUrl, authToken, keySetId);
+                    } else {
+                        Log.d(DRM_TAG, "No cached keySetId found, acquiring new license...");
+                        acquireNewLicense(videoUrl, licenseUrl, authToken);
+                    }
                 }
 
             } catch (Exception e) {
@@ -677,54 +683,67 @@
 
         @UnstableApi
         private void buildAndPlayMediaSource(String videoUrl, String licenseUrl, String authToken, byte[] keySetId) {
-            Log.d(TAG, "Building media source...");
+            boolean isHls = currentStreamType.equals("hls");
+            Log.d(TAG, "Building media source... (type: " + currentStreamType + ")");
 
-            if (keySetId != null) {
-                Log.d(DRM_TAG, "Using OFFLINE license mode (cached keySetId)");
-            } else {
-                Log.d(DRM_TAG, "Using ONLINE license mode (streaming)");
-            }
-
-            // Setup license request headers
-            Map<String, String> headers = new HashMap<>();
-            if (authToken != null && !authToken.isEmpty()) {
-                headers.put("X-AxDRM-Message", authToken);
-                Log.d(DRM_TAG, "Added X-AxDRM-Message header to DRM request");
-            }
-
-            // Build DRM configuration
-            MediaItem.DrmConfiguration.Builder drmBuilder = new MediaItem.DrmConfiguration.Builder(WIDEVINE_UUID)
-                    .setLicenseUri(licenseUrl)
-                    .setLicenseRequestHeaders(headers)
-                    .setMultiSession(false);
-
-            if (keySetId != null) {
-                drmBuilder.setKeySetId(keySetId);
-                Log.d(DRM_TAG, "KeySetId attached to media item");
-            }
-
-            // Build media item
             MediaItem.Builder builder = new MediaItem.Builder()
-                    .setUri(videoUrl)
-                    .setMimeType(MimeTypes.APPLICATION_MPD)
-                    .setDrmConfiguration(drmBuilder.build());
+                    .setUri(videoUrl);
+
+            if (isHls) {
+                // HLS stream — no DRM
+                builder.setMimeType(MimeTypes.APPLICATION_M3U8);
+                Log.d(TAG, "Configured as HLS stream");
+            } else {
+                // DASH stream — with Widevine DRM
+                builder.setMimeType(MimeTypes.APPLICATION_MPD);
+
+                if (keySetId != null) {
+                    Log.d(DRM_TAG, "Using OFFLINE license mode (cached keySetId)");
+                } else {
+                    Log.d(DRM_TAG, "Using ONLINE license mode (streaming)");
+                }
+
+                Map<String, String> headers = new HashMap<>();
+                if (authToken != null && !authToken.isEmpty()) {
+                    headers.put("X-AxDRM-Message", authToken);
+                    Log.d(DRM_TAG, "Added X-AxDRM-Message header to DRM request");
+                }
+
+                MediaItem.DrmConfiguration.Builder drmBuilder = new MediaItem.DrmConfiguration.Builder(WIDEVINE_UUID)
+                        .setLicenseUri(licenseUrl)
+                        .setLicenseRequestHeaders(headers)
+                        .setMultiSession(false);
+
+                if (keySetId != null) {
+                    drmBuilder.setKeySetId(keySetId);
+                    Log.d(DRM_TAG, "KeySetId attached to media item");
+                }
+
+                builder.setDrmConfiguration(drmBuilder.build());
+            }
 
             // Add subtitles if available
             addSubtitlesToMediaItem(builder);
 
             MediaItem mediaItem = builder.build();
 
-            // Create media source
+            // Create the appropriate media source
             DefaultHttpDataSource.Factory httpDataSourceFactory = new DefaultHttpDataSource.Factory();
-            MediaSource mediaSource = new DashMediaSource.Factory(httpDataSourceFactory)
-                    .createMediaSource(mediaItem);
+            MediaSource mediaSource;
+            if (isHls) {
+                mediaSource = new HlsMediaSource.Factory(httpDataSourceFactory)
+                        .createMediaSource(mediaItem);
+            } else {
+                mediaSource = new DashMediaSource.Factory(httpDataSourceFactory)
+                        .createMediaSource(mediaItem);
+            }
 
             Log.d(TAG, "Media source created, preparing player...");
             exoPlayer.setMediaSource(mediaSource);
             exoPlayer.prepare();
             exoPlayer.play();
 
-            Log.d(TAG, "✓ Playback started successfully");
+            Log.d(TAG, "✓ Playback started successfully (" + currentStreamType + ")");
         }
         @UnstableApi
         private OfflineLicenseHelper buildOfflineLicenseHelper(String licenseUrl, String authToken) {
