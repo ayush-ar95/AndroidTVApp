@@ -130,6 +130,9 @@
             webSettings.setAllowContentAccess(true);
             webSettings.setAllowFileAccess(true);
             webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            webSettings.setUseWideViewPort(true);
+            webSettings.setLoadWithOverviewMode(true);
+            webSettings.setTextZoom(100);
 
             webView.setWebViewClient(new WebViewClient() {
                 @Override
@@ -142,7 +145,7 @@
             webView.addJavascriptInterface(new WebAppInterface(this), "AndroidTV");
             webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
             WebView.setWebContentsDebuggingEnabled(true);
-            webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/");
+            webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/@Gundu99/f");
 //            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
 //            webView.loadUrl("https://homecinemaplus.tv/");
 //            webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
