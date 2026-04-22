@@ -146,9 +146,9 @@
             webView.addJavascriptInterface(new WebAppInterface(this), "AndroidTV");
             webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
             WebView.setWebContentsDebuggingEnabled(true);
-             webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/@Gundu99/f");
+            //  webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/@Gundu99/f");
 //            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
-//           webView.loadUrl("https://homecinemaplus.tv/");
+          webView.loadUrl("https://homecinemaplus.tv/");
 //            webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
 //            webView.loadUrl("https://live.flixlocal.com/ui/");
 
