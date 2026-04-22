@@ -10,6 +10,7 @@
     import android.view.Gravity;
     import android.view.KeyEvent;
     import android.view.View;
+    import android.view.WindowManager;
     import android.webkit.JavascriptInterface;
     import android.webkit.ValueCallback;
     import android.webkit.WebChromeClient;
@@ -145,10 +146,11 @@
             webView.addJavascriptInterface(new WebAppInterface(this), "AndroidTV");
             webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
             WebView.setWebContentsDebuggingEnabled(true);
-            // webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/@Gundu99/f");
+             webView.loadUrl("https://dev.toqqer.com/toqqer/static/toqqer-ui/@Gundu99/f");
 //            webView.loadUrl("https://dev.toqqer.com/toqqer/static/demo-ui/");
-           webView.loadUrl("https://homecinemaplus.tv/");
+//           webView.loadUrl("https://homecinemaplus.tv/");
 //            webView.loadUrl("https://toqqer.com/ui/@LimpopoTv/f");
+//            webView.loadUrl("https://live.flixlocal.com/ui/");
 
             // Setup ExoPlayer
             playerView = findViewById(R.id.player_view);
@@ -184,6 +186,17 @@
                         startAccumulatingWatchTime();
                     } else {
                         stopAccumulatingWatchTime();
+                    }
+                }
+
+                @Override
+                public void onIsPlayingChanged(boolean isPlaying) {
+                    // Keep screen on only while actively streaming — lets TCL/Android
+                    // screensaver resume normal behavior when paused/stopped/idle.
+                    if (isPlaying) {
+                        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    } else {
+                        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     }
                 }
 
@@ -830,6 +843,7 @@
                 stopAccumulatingWatchTime();
 
                 exoPlayer.stop();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 playerView.setVisibility(View.GONE);
 
                 // CHANGE: Send tracked data to web via JS bridge
@@ -904,6 +918,7 @@
                 // CHANGE: Pause accumulation on app pause
                 stopAccumulatingWatchTime();
             }
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
 
         @Override
@@ -918,6 +933,7 @@
         @Override
         protected void onDestroy() {
             super.onDestroy();
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             if (exoPlayer != null) {
                 Log.d(TAG, "Activity destroyed - releasing ExoPlayer");
                 exoPlayer.release();
